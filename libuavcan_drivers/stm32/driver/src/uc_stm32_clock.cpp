@@ -20,7 +20,7 @@
 #  define TIMX_INPUT_CLOCK        STM32_TIMCLK1
 # endif
 
-# if (UAVCAN_STM32_CHIBIOS && CH_KERNEL_MAJOR == 3)
+# if (UAVCAN_STM32_CHIBIOS && CH_KERNEL_MAJOR == 3) || UAVCAN_STM32_CHOPSTX 
 #  define TIMX                    UAVCAN_STM32_GLUE2(STM32_TIM, UAVCAN_STM32_TIMER_NUMBER)
 #  define TIMX_IRQn               UAVCAN_STM32_GLUE3(STM32_TIM, UAVCAN_STM32_TIMER_NUMBER, _NUMBER)
 #  define TIMX_IRQHandler         UAVCAN_STM32_GLUE3(STM32_TIM, UAVCAN_STM32_TIMER_NUMBER, _HANDLER)
@@ -51,6 +51,14 @@
 # endif
 
 extern "C" UAVCAN_STM32_IRQ_HANDLER(TIMX_IRQHandler);
+
+# if UAVCAN_STM32_CHOPSTX
+extern "C"
+{
+extern uint8_t __stack_heap_tim__[];
+static uint32_t stack_irq_timx = (uint32_t) &__stack_heap_tim__[0];
+}
+# endif
 
 namespace uavcan_stm32
 {
@@ -106,15 +114,20 @@ void init()
     initialized = true;
 
 
-# if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_BAREMETAL
+# if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_CHOPSTX || UAVCAN_STM32_BAREMETAL
     // Power-on and reset
     TIMX_RCC_ENR |= TIMX_RCC_ENR_MASK;
     TIMX_RCC_RSTR |=  TIMX_RCC_RSTR_MASK;
     TIMX_RCC_RSTR &= ~TIMX_RCC_RSTR_MASK;
 
+# if UAVCAN_STM32_CHOPSTX
+    chopstx_create (PRIO_IRQ_TIMX, stack_irq_timx, 256,
+		    TIMX_IRQHandler, NULL);
+# else
     // Enable IRQ
     nvicEnableVector(TIMX_IRQn,  UAVCAN_STM32_IRQ_PRIORITY_MASK);
-
+# endif
+    
 # if (TIMX_INPUT_CLOCK % 1000000) != 0
 #  error "No way, timer clock must be divisible to 1e6. FIXME!"
 # endif
@@ -178,7 +191,7 @@ void setUtc(uavcan::UtcTime time)
 
 static uavcan::uint64_t sampleUtcFromCriticalSection()
 {
-# if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_BAREMETAL
+# if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_CHOPSTX || UAVCAN_STM32_BAREMETAL
     UAVCAN_ASSERT(initialized);
     UAVCAN_ASSERT(TIMX->DIER & TIM_DIER_UIE);
 
@@ -228,7 +241,7 @@ uavcan::MonotonicTime getMonotonic()
 
         volatile uavcan::uint64_t time = time_mono;
 
-# if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_BAREMETAL
+# if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_CHOPSTX || UAVCAN_STM32_BAREMETAL
 
         volatile uavcan::uint32_t cnt = TIMX->CNT;
         if (TIMX->SR & TIM_SR_UIF)
@@ -431,11 +444,10 @@ SystemClock& SystemClock::instance()
  */
 
 extern "C"
-UAVCAN_STM32_IRQ_HANDLER(TIMX_IRQHandler)
 {
-    UAVCAN_STM32_IRQ_PROLOGUE();
-
-# if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_BAREMETAL
+static void handleTIMxInterrupt()
+{
+# if UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_CHOPSTX || UAVCAN_STM32_BAREMETAL
     TIMX->SR = 0;
 # endif
 # if UAVCAN_STM32_NUTTX
@@ -471,8 +483,30 @@ UAVCAN_STM32_IRQ_HANDLER(TIMX_IRQHandler)
             ; // Zero
         }
     }
-
-    UAVCAN_STM32_IRQ_EPILOGUE();
 }
 
+# if UAVCAN_STM32_CHOPSTX
+UAVCAN_STM32_IRQ_HANDLER(TIMX_IRQHandler)
+{
+    UAVCAN_STM32_IRQ_PROLOGUE();
+    chopstx_intr_t pt;
+    chopstx_claim_irq (&pt, STM32_IRQ_TIMX);
+    while (1)
+    {
+	if (chopstx_poll(NULL, 1, &pt) == 1 && pt.ready)
+	{
+    	    handleTIMxInterrupt();
+	}
+    }
+    UAVCAN_STM32_IRQ_EPILOGUE();
+}
+# else
+UAVCAN_STM32_IRQ_HANDLER(TIMX_IRQHandler)
+{
+    UAVCAN_STM32_IRQ_PROLOGUE();
+    handleTIMxInterrupt();
+    UAVCAN_STM32_IRQ_EPILOGUE();
+}
+# endif
+} // extern "C"
 #endif

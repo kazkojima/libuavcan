@@ -225,6 +225,35 @@ void BusEvent::signalFromInterrupt()
     }
 }
 
+#elif UAVCAN_STM32_CHOPSTX
+BusEvent::BusEvent(CanDriver& can_driver)
+{
+    (void) can_driver;
+    eventflag_init(&ev_);
+}
+
+bool BusEvent::wait(uavcan::MonotonicDuration duration)
+{
+    static const uavcan::uint32_t MaxDelayMSec = 0x000FFFFF;
+    const uavcan::int64_t msec = duration.toMSec();
+
+    std::uint32_t usec_p;
+    usec_p = ((msec > MaxDelayMSec) ? MaxDelayMSec : msec) * 1000;
+    if (eventflag_wait_timeout (&ev_,usec_p))
+	return true;
+
+    return false;
+}
+
+void BusEvent::signal()
+{
+    eventflag_signal (&ev_, 1);
+}
+
+void BusEvent::signalFromInterrupt()
+{
+    eventflag_signal (&ev_, 1);
+}
 #endif
 
 }

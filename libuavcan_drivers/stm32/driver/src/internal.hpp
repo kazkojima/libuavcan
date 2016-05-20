@@ -13,6 +13,9 @@
 # include <arch/board/board.h>
 # include <chip/stm32_tim.h>
 # include <syslog.h>
+#elif UAVCAN_STM32_CHOPSTX
+# include <chip.h>
+# include <sysconf.h>
 #elif UAVCAN_STM32_BAREMETAL
 # include <chip.h>
 #else
@@ -43,6 +46,10 @@
 # define UAVCAN_STM32_IRQ_HANDLER(id)  int id(int irq, FAR void* context)
 # define UAVCAN_STM32_IRQ_PROLOGUE()
 # define UAVCAN_STM32_IRQ_EPILOGUE()    return 0;
+#elif UAVCAN_STM32_CHOPSTX
+# define UAVCAN_STM32_IRQ_HANDLER(id)  void* id(void*)
+# define UAVCAN_STM32_IRQ_PROLOGUE()
+# define UAVCAN_STM32_IRQ_EPILOGUE()    return NULL;
 #else
 # define UAVCAN_STM32_IRQ_HANDLER(id)  void id(void)
 # define UAVCAN_STM32_IRQ_PROLOGUE()
@@ -103,6 +110,24 @@ struct CriticalSectionLocker
     ~CriticalSectionLocker()
     {
         irqrestore(flags_);
+    }
+};
+
+#elif UAVCAN_STM32_CHOPSTX
+
+struct CriticalSectionLocker
+{
+
+    CriticalSectionLocker()
+    {
+        uint32_t tmp = 0xff;
+	asm volatile ("msr BASEPRI, %0" : : "r" (tmp) : "memory");
+    }
+
+    ~CriticalSectionLocker()
+    {
+        uint32_t tmp = 0;
+	asm volatile ("msr BASEPRI, %0" : : "r" (tmp) : "memory");
     }
 };
 

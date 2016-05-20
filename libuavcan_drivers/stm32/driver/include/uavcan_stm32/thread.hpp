@@ -16,6 +16,13 @@
 # include <cstdio>
 # include <ctime>
 # include <cstring>
+#elif UAVCAN_STM32_CHOPSTX
+extern "C" {
+# include <stdint.h>
+# include <stdlib.h>
+# include <chopstx.h>
+# include <eventflag.h>
+}
 #elif UAVCAN_STM32_BAREMETAL
 #else
 # error "Unknown OS"
@@ -121,6 +128,44 @@ public:
     void unlock()
     {
         (void)pthread_mutex_unlock(&mutex_);
+    }
+};
+#elif UAVCAN_STM32_CHOPSTX
+
+class BusEvent
+{
+    struct eventflag ev_;
+
+public:
+    BusEvent(CanDriver& can_driver);
+
+    ~BusEvent();
+
+    bool wait(uavcan::MonotonicDuration duration);
+
+    void signal();
+
+    void signalFromInterrupt();
+};
+
+class Mutex
+{
+    chopstx_mutex_t mutex_;
+
+public:
+    Mutex()
+    {
+        chopstx_mutex_init(&mutex_);
+    }
+
+    void lock()
+    {
+        chopstx_mutex_lock(&mutex_);
+    }
+
+    void unlock()
+    {
+        chopstx_mutex_unlock(&mutex_);
     }
 };
 #elif UAVCAN_STM32_BAREMETAL

@@ -14,6 +14,7 @@
 # include <nuttx/arch.h>
 # include <nuttx/irq.h>
 # include <arch/board/board.h>
+#elif UAVCAN_STM32_CHOPSTX
 #elif UAVCAN_STM32_BAREMETAL
 #include <chip.h>
 #else
@@ -33,7 +34,7 @@
 # endif
 #endif
 
-#if (UAVCAN_STM32_CHIBIOS && CH_KERNEL_MAJOR == 3)
+#if (UAVCAN_STM32_CHIBIOS && CH_KERNEL_MAJOR == 3) || UAVCAN_STM32_CHOPSTX
 #define CAN1_TX_IRQHandler      STM32_CAN1_TX_HANDLER
 #define CAN1_RX0_IRQHandler     STM32_CAN1_RX0_HANDLER
 #define CAN1_RX1_IRQHandler     STM32_CAN1_RX1_HANDLER
@@ -54,6 +55,28 @@ extern "C"
 static int can1_irq(const int irq, void*);
 #if UAVCAN_STM32_NUM_IFACES > 1
 static int can2_irq(const int irq, void*);
+#endif
+}
+#endif
+
+#if UAVCAN_STM32_CHOPSTX
+extern "C"
+{
+UAVCAN_STM32_IRQ_HANDLER(CAN1_TX_IRQHandler);
+UAVCAN_STM32_IRQ_HANDLER(CAN1_RX0_IRQHandler);
+UAVCAN_STM32_IRQ_HANDLER(CAN1_RX1_IRQHandler);
+extern uint8_t __stack_heap_can1__[];
+static uint32_t stack_irq_can1tx = (uint32_t) &__stack_heap_can1__[0];
+static uint32_t stack_irq_can1rx0 = (uint32_t) &__stack_heap_can1__[256];
+static uint32_t stack_irq_can1rx1 = (uint32_t) &__stack_heap_can1__[512];
+#if UAVCAN_STM32_NUM_IFACES > 1
+UAVCAN_STM32_IRQ_HANDLER(CAN2_TX_IRQHandler);
+UAVCAN_STM32_IRQ_HANDLER(CAN2_RX0_IRQHandler);
+UAVCAN_STM32_IRQ_HANDLER(CAN2_RX1_IRQHandler);
+extern uint8_t __stack_heap_can2__[];
+static uint32_t stack_irq_can2tx = (uint32_t) &__stack_heap_can2__[0];
+static uint32_t stack_irq_can2rx0 = (uint32_t) &__stack_heap_can2__[256];
+static uint32_t stack_irq_can2rx1 = (uint32_t) &__stack_heap_can2__[512];
 #endif
 }
 #endif
@@ -204,6 +227,8 @@ int CanIface::computeTimings(const uavcan::uint32_t target_bitrate, Timings& out
 #elif UAVCAN_STM32_CHIBIOS
     const uavcan::uint32_t pclk = STM32_PCLK1;
 #elif UAVCAN_STM32_NUTTX
+    const uavcan::uint32_t pclk = STM32_PCLK1_FREQUENCY;
+#elif UAVCAN_STM32_CHOPSTX
     const uavcan::uint32_t pclk = STM32_PCLK1_FREQUENCY;
 #else
 # error "Unknown OS"
@@ -454,7 +479,7 @@ uavcan::int16_t CanIface::configureFilters(const uavcan::CanFilterConfig* filter
 
 bool CanIface::waitMsrINakBitStateChange(bool target_state)
 {
-#if UAVCAN_STM32_NUTTX || UAVCAN_STM32_CHIBIOS
+#if UAVCAN_STM32_NUTTX || UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_CHOPSTX
     const unsigned Timeout = 1000;
 #else
     const unsigned Timeout = 2000000;
@@ -471,6 +496,9 @@ bool CanIface::waitMsrINakBitStateChange(bool target_state)
 #endif
 #if UAVCAN_STM32_CHIBIOS
         ::chThdSleep(MS2ST(1));
+#endif
+#if UAVCAN_STM32_CHOPSTX
+        ::chopstx_usec_wait(1000);
 #endif
     }
     return false;
@@ -923,6 +951,22 @@ void CanDriver::initOnce()
     IRQ_ATTACH(STM32_IRQ_CAN2RX1, can2_irq);
 # endif
 # undef IRQ_ATTACH
+#elif UAVCAN_STM32_CHOPSTX
+    // Create and launch threads for interrupt
+    chopstx_create (PRIO_IRQ_CAN1TX, stack_irq_can1tx, 256,
+		    CAN1_TX_IRQHandler, NULL);
+    chopstx_create (PRIO_IRQ_CAN1RX0, stack_irq_can1rx0, 256,
+		    CAN1_RX0_IRQHandler, NULL);
+    chopstx_create (PRIO_IRQ_CAN1RX1, stack_irq_can1rx1, 256,
+		    CAN1_RX1_IRQHandler, NULL);
+# if UAVCAN_STM32_NUM_IFACES > 1
+    chopstx_create (PRIO_IRQ_CAN2TX, stack_irq_can2tx, 256,
+		    CAN2_TX_IRQHandler, NULL);
+    chopstx_create (PRIO_IRQ_CAN2RX0, stack_irq_can2rx0, 256,
+		    CAN2_RX0_IRQHandler, NULL);
+    chopstx_create (PRIO_IRQ_CAN2RX1, stack_irq_can2rx1, 256,
+		    CAN2_RX1_IRQHandler, NULL);
+# endif
 #elif UAVCAN_STM32_CHIBIOS || UAVCAN_STM32_BAREMETAL
     {
         CriticalSectionLocker lock;
@@ -1060,6 +1104,99 @@ static int can2_irq(const int irq, void*)
         PANIC();
     }
     return 0;
+}
+
+# endif
+#elif UAVCAN_STM32_CHOPSTX
+UAVCAN_STM32_IRQ_HANDLER(CAN1_TX_IRQHandler)
+{
+    UAVCAN_STM32_IRQ_PROLOGUE();
+    chopstx_intr_t pt;
+    chopstx_claim_irq (&pt, STM32_IRQ_CAN1TX);
+    while (1)
+    {
+	if (chopstx_poll(NULL, 1, &pt) == 1 && pt.ready)
+	{
+    	    uavcan_stm32::handleTxInterrupt(0);
+	}
+    }
+    UAVCAN_STM32_IRQ_EPILOGUE();
+}
+
+UAVCAN_STM32_IRQ_HANDLER(CAN1_RX0_IRQHandler)
+{
+    UAVCAN_STM32_IRQ_PROLOGUE();
+    chopstx_intr_t pt;
+    chopstx_claim_irq (&pt, STM32_IRQ_CAN1RX0);
+    while (1)
+    {
+	if (chopstx_poll(NULL, 1, &pt) == 1 && pt.ready)
+	{
+	  uavcan_stm32::handleRxInterrupt(0, 0);
+	}
+    }
+    UAVCAN_STM32_IRQ_EPILOGUE();
+}
+
+UAVCAN_STM32_IRQ_HANDLER(CAN1_RX1_IRQHandler)
+{
+    UAVCAN_STM32_IRQ_PROLOGUE();
+    chopstx_intr_t pt;
+    chopstx_claim_irq (&pt, STM32_IRQ_CAN1RX1);
+    while (1)
+    {
+	if (chopstx_poll(NULL, 1, &pt) == 1 && pt.ready)
+	{
+	  uavcan_stm32::handleRxInterrupt(0, 1);
+	}
+    }
+    UAVCAN_STM32_IRQ_EPILOGUE();
+}
+
+# if UAVCAN_STM32_NUM_IFACES > 1
+UAVCAN_STM32_IRQ_HANDLER(CAN2_TX_IRQHandler)
+{
+    UAVCAN_STM32_IRQ_PROLOGUE();
+    chopstx_intr_t pt;
+    chopstx_claim_irq (&pt, STM32_IRQ_CAN2TX);
+    while (1)
+    {
+	if (chopstx_poll(NULL, 1, &pt) == 1 && pt.ready)
+	{
+    	    uavcan_stm32::handleTxInterrupt(1);
+	}
+    }
+    UAVCAN_STM32_IRQ_EPILOGUE();
+}
+
+UAVCAN_STM32_IRQ_HANDLER(CAN2_RX0_IRQHandler)
+{
+    UAVCAN_STM32_IRQ_PROLOGUE();
+    chopstx_intr_t pt;
+    chopstx_claim_irq (&pt, STM32_IRQ_CAN2RX0);
+    while (1)
+    {
+	if (chopstx_poll(NULL, 1, &pt) == 1 && pt.ready)
+	{
+	  uavcan_stm32::handleRxInterrupt(1, 0);
+	}
+    }
+    UAVCAN_STM32_IRQ_EPILOGUE();
+}
+
+UAVCAN_STM32_IRQ_HANDLER(CAN2_RX1_IRQHandler)
+{
+    UAVCAN_STM32_IRQ_PROLOGUE();
+    chopstx_intr_t pt;
+    chopstx_claim_irq (&pt, STM32_IRQ_CAN2RX1);
+    while (1)
+    {
+	if (chopstx_poll(NULL, 1, &pt) == 1 && pt.ready)
+	{
+	  uavcan_stm32::handleRxInterrupt(1, 1);
+	}
+    }
+    UAVCAN_STM32_IRQ_EPILOGUE();
 }
 
 # endif
