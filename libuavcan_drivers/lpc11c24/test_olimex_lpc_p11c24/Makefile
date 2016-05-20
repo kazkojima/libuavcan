@@ -49,7 +49,7 @@ DEPDIR = $(BUILDDIR)/dep
 
 DEF += -DNDEBUG -DCHIP_LPC11CXX -DCORE_M0 -DTHUMB_NO_INTERWORKING -U__STRICT_ANSI__
 
-FLAGS = -mthumb -mcpu=cortex-m0 -mno-thumb-interwork -flto -Os -g3 -Wall -Wextra -Werror -Wundef -ffunction-sections \
+FLAGS = -mthumb -mcpu=cortex-m0 -mno-thumb-interwork -Os -g3 -Wall -Wextra -Werror -Wundef -ffunction-sections \
         -fdata-sections -fno-common -fno-exceptions -fno-unwind-tables -fno-stack-protector -fomit-frame-pointer \
         -Wfloat-equal -Wconversion -Wsign-conversion -Wmissing-declarations
 
@@ -59,11 +59,11 @@ CFLAGS = $(C_CPP_FLAGS) -std=c99
 
 CPPFLAGS = $(C_CPP_FLAGS) -pedantic -std=c++11 -fno-rtti -fno-threadsafe-statics
 
-LDFLAGS = $(FLAGS) -nodefaultlibs -lc -lgcc -nostartfiles -Tlpc11c24.ld -Xlinker --gc-sections \
+LDFLAGS = $(FLAGS) -nodefaultlibs -lc -lgcc-m0 -nostartfiles -Tlpc11c24.ld -Xlinker --gc-sections \
           -Wl,-Map,$(BUILDDIR)/output.map
 
 # Link with nano newlib. Other toolchains may not support this option, so it can be safely removed.
-LDFLAGS += --specs=nano.specs
+#LDFLAGS += --specs=nano.specs
 
 COBJ   = $(addprefix $(OBJDIR)/, $(notdir $(CSRC:.c=.o)))
 CPPOBJ = $(addprefix $(OBJDIR)/, $(notdir $(CPPSRC:.cpp=.o)))
